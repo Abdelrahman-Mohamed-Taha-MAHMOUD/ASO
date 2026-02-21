@@ -284,24 +284,42 @@ Model 05 supports five loss configurations:
 
 ### 1. MSE Loss (`mse`)
 Standard mean squared error:
-$$\mathcal{L}_{\text{MSE}} = \frac{1}{N}\sum_{i=1}^{N}(y_i - \hat{y}_i)^2$$
+
+$$
+\mathcal{L}_{\text{MSE}} = \frac{1}{N}\sum_{i=1}^{N}(y_i - \hat{y}_i)^2
+$$
 
 ### 2. ListNet Loss (`listnet`)
 A listwise ranking loss that treats the batch as a ranked list:
-$$\mathcal{L}_{\text{ListNet}} = -\sum_{i} P_{\text{true}}(i) \cdot \log P_{\text{pred}}(i)$$
+
+$$
+\mathcal{L}_{\text{ListNet}} = -\sum_{i} P_{\text{true}}(i) \cdot \log P_{\text{pred}}(i)
+$$
+
 where $P(i) = \text{softmax}(y_i / \tau)$ with temperature $\tau$.
 
 ### 3. RankNet Loss (`ranknet`)
 A pairwise ranking loss (Burges et al., 2005):
-$$\mathcal{L}_{\text{RankNet}} = -\bar{P}_{ij}\log(\hat{P}_{ij}) - (1-\bar{P}_{ij})\log(1-\hat{P}_{ij})$$
+
+$$
+\mathcal{L}_{\text{RankNet}} = -\bar{P}_{ij}\log(\hat{P}_{ij}) - (1-\bar{P}_{ij})\log(1-\hat{P}_{ij})
+$$
+
 Efficient implementation samples up to 512 random pairs per batch.
 
 ### 4. Mixed Loss (`mixed`) — **CLI Default**
-$$\mathcal{L}_{\text{mixed}} = \alpha \cdot \mathcal{L}_{\text{MSE}} + (1-\alpha) \cdot \mathcal{L}_{\text{ListNet}}$$
+
+$$
+\mathcal{L}_{\text{mixed}} = \alpha \cdot \mathcal{L}_{\text{MSE}} + (1-\alpha) \cdot \mathcal{L}_{\text{ListNet}}
+$$
+
 with $\alpha = 0.5$. Balances pointwise accuracy with ranking quality.
 
 ### 5. RankNet Mixed (`ranknet_mixed`) — **Used in Actual Training Run**
-$$\mathcal{L}_{\text{ranknet\_mixed}} = \alpha \cdot \mathcal{L}_{\text{MSE}} + (1-\alpha) \cdot \mathcal{L}_{\text{RankNet}}$$
+
+$$
+\mathcal{L}_{\text{ranknet\_mixed}} = \alpha \cdot \mathcal{L}_{\text{MSE}} + (1-\alpha) \cdot \mathcal{L}_{\text{RankNet}}
+$$
 
 > **Note**: The training run that produced the saved checkpoints used `ranknet_mixed` (confirmed by `hparams.yaml`), not the CLI default `mixed`. This combines MSE for pointwise accuracy with RankNet for pairwise ranking quality.
 
@@ -403,9 +421,13 @@ Per the OligoAI paper, Spearman correlation must be computed as:
 2. Compute Spearman ρ within each screen (groups with ≥3 samples)
 3. Report the **mean** across all screens
 
-$$\rho_{\text{screen}} = 1 - \frac{6\sum d_i^2}{n(n^2-1)}$$
+$$
+\rho_{\text{screen}} = 1 - \frac{6\sum d_i^2}{n(n^2-1)}
+$$
 
-$$\text{mean\_spearman\_corr} = \frac{1}{|S|}\sum_{s \in S} \rho_s$$
+$$
+\text{mean\_spearman\_corr} = \frac{1}{|S|}\sum_{s \in S} \rho_s
+$$
 
 > **⚠️ Implementation note**: The `train.py` script computes **global Spearman** (single correlation over the entire test set) for simplicity during training. For the official per-screen metric matching the OligoAI definition, use the standalone evaluation script:
 > ```bash
@@ -421,7 +443,9 @@ Following the OligoAI definition:
 3. Compute the fraction of these that are also in the top 10% by true inhibition
 4. Compute enrichment as:
 
-$$\text{Enrichment Factor} = \frac{\text{Hit rate in predicted top 10\%}}{0.10}$$
+$$
+\text{Enrichment Factor} = \frac{\text{Hit rate in predicted top 10\%}}{0.10}
+$$
 
 An enrichment of 1.0× means random performance; higher is better.
 
