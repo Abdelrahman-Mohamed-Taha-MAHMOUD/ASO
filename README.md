@@ -318,7 +318,7 @@ with $\alpha = 0.5$. Balances pointwise accuracy with ranking quality.
 ### 5. RankNet Mixed (`ranknet_mixed`) — **Used in Actual Training Run**
 
 $$
-\mathcal{L}_{\text{ranknet\_mixed}} = \alpha \cdot \mathcal{L}_{\text{MSE}} + (1-\alpha) \cdot \mathcal{L}_{\text{RankNet}}
+\mathcal{L}_{\text{ranknet-mixed}} = \alpha \cdot \mathcal{L}_{\text{MSE}} + (1-\alpha) \cdot \mathcal{L}_{\text{RankNet}}
 $$
 
 > **Note**: The training run that produced the saved checkpoints used `ranknet_mixed` (confirmed by `hparams.yaml`), not the CLI default `mixed`. This combines MSE for pointwise accuracy with RankNet for pairwise ranking quality.
@@ -426,7 +426,7 @@ $$
 $$
 
 $$
-\text{mean\_spearman\_corr} = \frac{1}{|S|}\sum_{s \in S} \rho_s
+\text{mean-spearman-corr} = \frac{1}{|S|}\sum_{s \in S} \rho_s
 $$
 
 > **⚠️ Implementation note**: The `train.py` script computes **global Spearman** (single correlation over the entire test set) for simplicity during training. For the official per-screen metric matching the OligoAI definition, use the standalone evaluation script:
