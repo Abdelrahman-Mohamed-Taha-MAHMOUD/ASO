@@ -587,10 +587,10 @@ Individual base model performance on the **validation** set (default hyperparame
 
 ### Top SHAP Features
 
-The 20 most influential features by mean |SHAP value|:
+The 20 most influential features by mean \|SHAP value\|:
 
-| Rank | Feature | Mean |SHAP| | Category |
-|:----:|---------|:----------:|----------|
+| Rank | Feature | Mean \|SHAP\| | Category |
+|:----:|---------|:-------------:|----------|
 | 1 | `backbone_PS` | 1.042 | Chemistry — PS backbone count |
 | 2 | `gc_content` | 0.714 | Sequence — GC fraction |
 | 3 | `backbone_PO` | 0.609 | Chemistry — PO backbone count |
