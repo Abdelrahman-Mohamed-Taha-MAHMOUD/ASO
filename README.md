@@ -506,7 +506,7 @@ The per-screen metric is the **primary metric** defined in OligoAI §5.2, as it 
 
 Measures overlap between predicted top-10% and actual top-10% ASOs:
 
-$$\text{Enrichment} = \frac{|\text{top}_{10\%}^{\text{pred}} \cap \text{top}_{10\%}^{\text{true}}|}{0.1 \times N_{\text{top}}}$$
+$$\text{Enrichment} = \frac{\left|\text{top}\_{10\%}^{\text{pred}} \cap \text{top}\_{10\%}^{\text{true}}\right|}{0.1 \times N\_{\text{top}}}$$
 
 Random baseline enrichment is $1.0\times$. Higher is better.
 
