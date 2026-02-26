@@ -1,58 +1,32 @@
-# Model 04: Enhanced Stacking Ensemble
+# Model 05: Enhanced OligoAI — Stage 3 Stabilized
 
 ## Table of Contents
 
 1. [Background](#background)
 2. [Overview](#overview)
 3. [Motivation & Design Rationale](#motivation--design-rationale)
-   - [Limitations Addressed from Model 06](#limitations-addressed-from-model-06)
 4. [Architecture](#architecture)
-   - [High-Level Pipeline](#high-level-pipeline)
-   - [Base Learners](#base-learners)
-   - [Stacking Meta-Learner](#stacking-meta-learner)
+   - [High-Level Diagram](#high-level-diagram)
+   - [Component Details](#component-details)
 5. [Feature Engineering](#feature-engineering)
-   - [Sequence Features](#sequence-features)
-   - [k-mer Features (NEW)](#k-mer-features-new)
-   - [Positional Property Encoding (NEW)](#positional-property-encoding-new)
-   - [Chemistry Features](#chemistry-features)
-   - [Context Features](#context-features)
-   - [Thermodynamic Features](#thermodynamic-features)
-   - [Enhanced (Biological) Features](#enhanced-biological-features)
-   - [Experimental Metadata](#experimental-metadata)
-   - [Complete Feature Summary](#complete-feature-summary)
-6. [Feature Selection](#feature-selection)
-   - [Stage 1 — Correlation Pruning](#stage-1--correlation-pruning)
-   - [Stage 2 — Mutual-Information Pruning](#stage-2--mutual-information-pruning)
-7. [Hyperparameter Optimisation](#hyperparameter-optimisation)
-   - [Optuna Bayesian Search](#optuna-bayesian-search)
-   - [Default Hyperparameters](#default-hyperparameters)
-8. [Training Pipeline](#training-pipeline)
+6. [Loss Functions](#loss-functions)
+7. [Training Pipeline](#training-pipeline)
    - [Data Loading & Splitting](#data-loading--splitting)
-   - [Feature Extraction](#feature-extraction)
-   - [Feature Selection & Scaling](#feature-selection--scaling)
-   - [Base Model Training](#base-model-training)
-   - [Stacking Ensemble Construction](#stacking-ensemble-construction)
-9. [GPU Acceleration](#gpu-acceleration)
-10. [Evaluation Protocol](#evaluation-protocol)
-    - [Data Split (§5.1)](#data-split-51)
-    - [Spearman Rank Correlation — `mean_spearman_corr` (§5.2)](#spearman-rank-correlation--mean_spearman_corr-52)
-    - [Enrichment Factor — `top_pred_target_ratio_median` (§5.3)](#enrichment-factor--top_pred_target_ratio_median-53)
-    - [Additional Metrics](#additional-metrics)
-    - [Required Output Format — `metrics.json` (§7)](#required-output-format--metricsjson-7)
-11. [SHAP Explainability Analysis](#shap-explainability-analysis)
-12. [Results & Analysis](#results--analysis)
-    - [Base Model Comparison](#base-model-comparison)
-    - [Stacking Ensemble Performance](#stacking-ensemble-performance)
-    - [Comparison with Baselines](#comparison-with-baselines)
-    - [Top SHAP Features](#top-shap-features)
-13. [Reproduction Instructions](#reproduction-instructions)
-    - [Quick Start](#quick-start)
-    - [Full Run with Optuna HPO](#full-run-with-optuna-hpo)
-    - [Using run.sh / Docker](#using-runsh--docker)
-    - [CLI Arguments](#cli-arguments)
-14. [Output Files Reference](#output-files-reference)
-15. [Logging & Disk Persistence](#logging--disk-persistence)
-16. [Known Limitations & Future Work](#known-limitations--future-work)
+   - [Gradual Unfreezing Strategy](#gradual-unfreezing-strategy)
+   - [Hyperparameter Configurations](#hyperparameter-configurations)
+   - [Training Loop & Callbacks](#training-loop--callbacks)
+8. [Evaluation Protocol](#evaluation-protocol)
+   - [Data Split](#data-split-51)
+   - [Spearman Rank Correlation](#spearman-rank-correlation--mean_spearman_corr-52)
+   - [Enrichment Factor](#enrichment-factor--top_pred_target_ratio_median-53)
+   - [Required Output Format](#required-output-format--metricsjson-7)
+9. [Results & Analysis](#results--analysis)
+   - [Training History](#training-history)
+   - [Comparison with OligoAI Baseline](#comparison-with-oligoai-baseline-73)
+10. [Reproduction Instructions](#reproduction-instructions)
+    - [Using run.sh / Docker](#using-runsh--docker-74)
+11. [File Reference](#file-reference)
+12. [Known Limitations & Future Work](#known-limitations--future-work)
 
 ---
 
@@ -61,349 +35,295 @@
 Antisense oligonucleotides (ASOs) are short, synthetic, single-stranded nucleic acids designed to bind complementary RNA sequences and modulate gene expression. In RNase H–mediated ASOs, hybridization forms a DNA–RNA heteroduplex that is cleaved by RNase H, resulting in degradation of the target RNA. Therapeutic ASOs commonly employ **gapmer designs** with:
 
 - A central DNA gap required for RNase H activity
-- Chemically modified flanking regions (e.g., 2ʼ-MOE, cEt) for stability
+- Chemically modified flanking regions (e.g., 2'-MOE, cEt) for stability
 - Backbone modifications (e.g., phosphorothioate/PS) for pharmacokinetics
 
-Predicting ASO efficacy remains challenging due to interactions between sequence, target RNA context, chemical modifications, and experimental conditions. This project uses the same ~180K ASO dataset and evaluation methodology as **OligoAI** (Spearman $\rho \approx 0.42$, enrichment $\approx 3\times$) to explore whether alternative architectures can achieve better or complementary performance.
+Predicting ASO efficacy remains challenging due to interactions between sequence, target RNA context, chemical modifications, and experimental conditions. This project uses the same ~180K ASO dataset and evaluation methodology as **OligoAI** (Spearman ρ ≈ 0.42, enrichment ≈ 3×) to explore whether alternative architectures can achieve better or complementary performance.
 
 ---
 
 ## Overview
 
-Model 04 is an **enhanced stacking ensemble** that directly addresses every known limitation of Model 06. It combines **five** gradient-boosted and tree-based regressors via a **Ridge meta-learner** trained on out-of-fold predictions, replacing the simple averaging strategy of Model 06-. The model introduces k-mer features, positional property encodings, two-stage feature selection, optional Bayesian hyperparameter optimisation (Optuna), per-screen Spearman evaluation, full SHAP explainability, and comprehensive disk logging.
+Model 05 is the most feature-rich deep learning pipeline in this project. It implements **all ten enhancements** described in or inspired by the OligoAI paper, built on top of the **RiNALMo** RNA language model backbone. The goal is to maximize Spearman rank correlation on the ASO knockdown efficacy prediction task by combining:
+
+- A larger pretrained RNA language model (RiNALMo `mega` or `giga`)
+- Rich auxiliary features (motifs, genomic regions, RNA structure, thermodynamics, miRNA overlap)
+- Advanced training techniques (gradual unfreezing, mixed ranking losses, cross-attention)
 
 | Property | Value |
 |----------|-------|
 | **Task** | Regression — predict ASO inhibition (%) |
-| **Primary metric** | Spearman rank correlation ($\rho$) |
+| **Primary metric** | Spearman rank correlation (ρ) |
 | **Secondary metric** | Enrichment factor (top-10% hit rate) |
-| **Framework** | scikit-learn, XGBoost, LightGBM, CatBoost |
-| **Ensemble strategy** | Stacking (5-fold CV + Ridge meta-learner) |
-| **Base models** | RF, GradientBoosting, XGBoost, LightGBM, CatBoost |
-| **Features** | 533 raw → 492 after selection |
-| **Training script** | `models/04_enhanced_ensemble/train.py` |
-| **GPU support** | XGBoost (CUDA), CatBoost (GPU) — auto-detected |
+| **Framework** | PyTorch Lightning |
+| **Backbone** | RiNALMo (mega / giga / micro) |
+| **Training script** | `models/05_oligoai_stage3_stabilized/train.py` |
 
 ---
 
 ## Motivation & Design Rationale
 
-Model 06 established that handcrafted features combined with a voting ensemble of tree-based learners can approach deep-learning performance on ASO efficacy prediction. However, it left several opportunities for improvement on the table. Model 04 was designed to systematically close every identified gap.
+The OligoAI paper demonstrated that combining RNA language model embeddings with chemical modification features and an MLP head achieves a median Spearman ρ ≈ 0.42. Model 05 was designed to push beyond this baseline by systematically incorporating every available signal:
 
-### Limitations Addressed from Model 06
-
-| # | Model 06 Limitation | Model 04 Solution |
-|---|---------------------|-------------------|
-| 1 | **No HPO** — all hyperparameters were manually chosen | **Optuna Bayesian search** with configurable `--optuna_trials` per base model |
-| 2 | **No CatBoost** — only 4 base learners (RF, GB, XGB, LGB) | **CatBoost added** as 5th base learner with native categorical handling |
-| 3 | **Simple averaging** — VotingRegressor computes arithmetic mean | **StackingRegressor** with Ridge meta-learner learns optimal blending weights via 5-fold CV |
-| 4 | **No k-mer features** — only single-nucleotide and dinucleotide frequencies | **Tri-nucleotide** (64 features) and **tetra-nucleotide** (256 features) normalised frequency vectors |
-| 5 | **Sparse one-hot positional encoding** — 60 binary features for 5 start/end positions | **Sinusoidal + nucleotide-property encoding** — dense 60 float features capturing purine/pyrimidine/amino/keto properties |
-| 6 | **No feature selection** — all extracted features passed through | **Two-stage selection**: correlation pruning ($\|r\| > 0.95$) + mutual-information importance pruning |
-| 7 | **No per-screen Spearman** — only global Spearman reported | **Per-screen Spearman** (OligoAI §5.2 protocol): mean of per-patent Spearman correlations |
-| 8 | **No SHAP analysis** — no feature importance or explainability | Full **SHAP TreeExplainer** with beeswarm, bar, and dependence plots |
-| 9 | **Minimal logging** — critical metrics only to console | **Dual-handler logging** (DEBUG to file, INFO to console) with every scalar, array, and figure written to disk |
-| 10 | **No GPU** — all models run on CPU only | **Auto-detected GPU** for XGBoost (`device="cuda"`) and CatBoost (`task_type="GPU"`) |
+1. **Backbone scaling**: Moving from RiNALMo-micro (≈5M params) to mega (≈32M) or giga (≈650M) for richer contextual representations.
+2. **Cross-attention**: Allowing ASO token representations to directly attend to target RNA context, modeling the binding interaction explicitly rather than through simple concatenation.
+3. **Domain-specific features**: Encoding known biological priors (motif patterns, genomic region effects, RNA secondary structure accessibility) as learnable embeddings.
+4. **Ranking-aware training**: Using ListNet or RankNet losses to directly optimize for rank correlation rather than pointwise MSE.
+5. **Gradual unfreezing**: Preventing catastrophic forgetting of pretrained representations by progressively unfreezing transformer layers.
 
 ---
 
 ## Architecture
 
-### High-Level Pipeline
+### High-Level Diagram
 
 ```
-┌─────────────────────────────────────────────────────────────────────────┐
-│                        MODEL 04 PIPELINE                                │
-│                                                                         │
-│  ┌──────────┐                                                           │
-│  │ CSV Data │  178,624 rows × 15 columns                                │
-│  └────┬─────┘                                                           │
-│       │                                                                 │
-│  ┌────▼──────────────────────┐                                          │
-│  │ Patent-Level Split        │                                          │
-│  │ train=142,861  val=12,391 │                                          │
-│  │ test=23,372               │                                          │
-│  └────┬──────────────────────┘                                          │
-│       │                                                                 │
-│  ┌────▼──────────────────────┐                                          │
-│  │ Feature Extraction        │  533 raw features per sample             │
-│  │ • Sequence (len, GC, di,  │                                          │
-│  │   tri-mer, tetra-mer,     │                                          │
-│  │   motifs, positional enc) │                                          │
-│  │ • Chemistry (sugar, BB,   │                                          │
-│  │   gapmer, pos-aware)      │                                          │
-│  │ • Context (GC, runs,      │                                          │
-│  │   miRNA, ctx k-mers)      │                                          │
-│  │ • Thermo (ΔG)             │                                          │
-│  │ • Enhanced (region,       │                                          │
-│  │   miRNA overlap, struct)  │                                          │
-│  │ • Metadata (dose, method) │                                          │
-│  └────┬──────────────────────┘                                          │
-│       │                                                                 │
-│  ┌────▼──────────────────────┐                                          │
-│  │ Feature Selection         │  533 → 492 features                      │
-│  │ 1. Correlation pruning    │  (removed 41 correlated)                 │
-│  │    (|r| > 0.95)           │                                          │
-│  │ 2. Mutual-information     │  (removed 0 low-MI)                     │
-│  │    pruning (q < 0.05)     │                                          │
-│  └────┬──────────────────────┘                                          │
-│       │                                                                 │
-│  ┌────▼──────────────────────┐                                          │
-│  │ StandardScaler            │  Zero-mean, unit-variance                │
-│  └────┬──────────────────────┘                                          │
-│       │                                                                 │
-│  ┌────▼──────────────────────┐    ┌──────────────────────────────┐      │
-│  │ [Optional] Optuna HPO     │───▶│ Best HPs per base model      │      │
-│  │ 50 trials × 5 models     │    │ (or skip → use defaults)     │      │
-│  └────┬──────────────────────┘    └──────────────────────────────┘      │
-│       │                                                                 │
-│  ┌────▼──────────────────────────────────────────────────────────┐      │
-│  │ Train 5 Base Models Individually                              │      │
-│  │ ┌──────┐ ┌──────┐ ┌──────┐ ┌──────┐ ┌──────┐                │      │
-│  │ │  RF  │ │  GB  │ │ XGB  │ │ LGB  │ │ CAT  │                │      │
-│  │ │      │ │      │ │(GPU) │ │      │ │(GPU) │                │      │
-│  │ └──┬───┘ └──┬───┘ └──┬───┘ └──┬───┘ └──┬───┘                │      │
-│  │    │        │        │        │        │                     │      │
-│  │    └────────┴────────┼────────┴────────┘                     │      │
-│  │                      │                                        │      │
-│  │  ┌───────────────────▼────────────────────────────────────┐  │      │
-│  │  │ StackingRegressor (5-fold CV)                          │  │      │
-│  │  │ OOF predictions from each base → Ridge meta-learner    │  │      │
-│  │  │ Learns optimal blending weights                        │  │      │
-│  │  └───────────────────┬────────────────────────────────────┘  │      │
-│  └──────────────────────┼────────────────────────────────────────┘      │
-│                         │                                               │
-│  ┌──────────────────────▼────────────────────────────────────────┐      │
-│  │ Evaluation (train / val / test)                                │      │
-│  │ R², MAE, RMSE, global Spearman, per-screen Spearman,          │      │
-│  │ Pearson r, enrichment factor                                   │      │
-│  └──────────────────────┬────────────────────────────────────────┘      │
-│                         │                                               │
-│  ┌──────────────────────▼────────────────────────────────────────┐      │
-│  │ SHAP Analysis (TreeExplainer on best base model)               │      │
-│  │ → shap_values.csv, shap_importance.csv                         │      │
-│  │ → beeswarm, bar chart, dependence plots                        │      │
-│  └───────────────────────────────────────────────────────────────┘      │
-│                                                                         │
-│  All outputs → results/04_enhanced_ensemble/                            │
-└─────────────────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────┐
+│  INPUT                                                            │
+│  ┌──────────┐  ┌──────────────┐  ┌─────────┐  ┌──────────────┐  │
+│  │ ASO Seq  │  │ RNA Context  │  │Chemistry│  │ Metadata     │  │
+│  │(tokens)  │  │  (tokens)    │  │(sugar,  │  │(method,dose, │  │
+│  │          │  │              │  │backbone)│  │region,motif) │  │
+│  └────┬─────┘  └──────┬───────┘  └────┬────┘  └──────┬───────┘  │
+│       │               │               │               │          │
+│  ┌────▼─────┐  ┌──────▼───────┐       │               │          │
+│  │ RiNALMo  │  │  RiNALMo     │       │               │          │
+│  │ Encoder  │  │  Encoder     │       │               │          │
+│  │(shared)  │  │  (shared)    │       │               │          │
+│  └────┬─────┘  └──────┬───────┘       │               │          │
+│       │               │               │               │          │
+│       │        ┌──────▼───────┐       │               │          │
+│       │        │+ Structural  │       │               │          │
+│       │        │  Features    │       │               │          │
+│       │        └──────┬───────┘       │               │          │
+│       │               │               │               │          │
+│  ┌────▼───────────────▼────┐          │               │          │
+│  │   Cross-Attention       │          │               │          │
+│  │   (ASO → Context)      │          │               │          │
+│  └────┬────────────────────┘          │               │          │
+│       │                               │               │          │
+│  ┌────▼───────────────────────┐       │               │          │
+│  │ Position-Aware Chemistry   │◄──────┘               │          │
+│  │ Embedding (pos + sugar +   │                       │          │
+│  │ backbone → 24-dim)         │                       │          │
+│  └────┬───────────────────────┘                       │          │
+│       │                                               │          │
+│  ┌────▼───────────────────┐                           │          │
+│  │ Bottleneck Fusion      │                           │          │
+│  │ (D+24 → 256 → D)      │                           │          │
+│  │ LayerNorm + GELU       │                           │          │
+│  └────┬───────────────────┘                           │          │
+│       │                                               │          │
+│  ┌────▼────────────┐  ┌──────────┐                    │          │
+│  │ Masked Mean Pool│  │ctx Pool  │                    │          │
+│  │   → 128-dim     │  │ → 128-dim│                    │          │
+│  └────┬────────────┘  └────┬─────┘                    │          │
+│       │                    │                          │          │
+│  ┌────▼────────────────────▼──────────────────────────▼──────┐   │
+│  │  CONCAT: ASO(128)+Ctx(128)+Method(8)+Motif(16)+           │   │
+│  │          Region(8)+StructType(8)+ΔG(1)+miRNA(1) = 298-dim │   │
+│  └────┬──────────────────────────────────────────────────────┘   │
+│       │                                                          │
+│  ┌────▼───────────────────────────────────────┐                  │
+│  │  MLP Head                                   │                  │
+│  │  298 → 256 (LN+GELU+Drop)                  │                  │
+│  │  256 → 128 (LN+GELU+Drop)                  │                  │
+│  │  128 → 64  (GELU)                           │                  │
+│  │   64 → 1   (Linear)                         │                  │
+│  └────┬───────────────────────────────────────┘                  │
+│       │                                                          │
+│  ┌────▼──────┐                                                   │
+│  │ Predicted │                                                   │
+│  │ Inhibition│                                                   │
+│  └───────────┘                                                   │
+└──────────────────────────────────────────────────────────────────┘
 ```
 
-### Base Learners
+### Component Details
 
-| Model | Implementation | Key Properties | GPU |
-|-------|---------------|----------------|-----|
-| **Random Forest (RF)** | `sklearn.ensemble.RandomForestRegressor` | Bagging, decorrelated trees, low bias | No |
-| **Gradient Boosting (GB)** | `sklearn.ensemble.GradientBoostingRegressor` | Sequential boosting, scikit-learn native | No |
-| **XGBoost (XGB)** | `xgboost.XGBRegressor` | Histogram-based, L1/L2 regularisation | Yes (`device="cuda"`) |
-| **LightGBM (LGB)** | `lightgbm.LGBMRegressor` | Leaf-wise growth, GOSS sampling | No (requires CMake rebuild) |
-| **CatBoost (CAT)** | `catboost.CatBoostRegressor` | Ordered boosting, native categoricals | Yes (`task_type="GPU"`) |
+#### 1. RiNALMo Backbone (Shared Encoder)
 
-### Stacking Meta-Learner
+The **RiNALMo** (RNA Informative Language Model) transformer is used as a shared encoder for both the ASO sequence and the target RNA context. It is a pretrained RNA language model that produces contextual token-level embeddings.
 
-Unlike Model 06's `VotingRegressor` (arithmetic mean), Model 04 uses scikit-learn's `StackingRegressor`:
+| Config | Layers | Embedding Dim | Parameters |
+|--------|--------|---------------|------------|
+| `micro` | 4 | 128 | ~5M |
+| `mega` | 12 | 640 | ~32M |
+| `giga` | 33 | 1280 | ~650M |
 
-1. **Out-of-fold (OOF) predictions**: For each of the 5 CV folds, each base model is trained on 4/5 of the training data and predicts on the held-out 1/5.
-2. **Meta-feature matrix**: The OOF predictions from all 5 base learners form a $N_{\text{train}} \times 5$ matrix.
-3. **Ridge regression**: A Ridge meta-learner ($\alpha = 1.0$) learns the optimal linear combination of base predictions.
-4. **Final prediction**: All 5 base models are retrained on the full training set. At inference time, their predictions are blended by the Ridge weights.
+Both the ASO and context sequences are passed through the **same** RiNALMo instance (weight sharing), producing `[B, L, D]` representations.
 
-**Why stacking over voting?**
-- Voting assigns equal weight to all models regardless of quality
-- Stacking learns data-driven weights, allowing better models to contribute more
-- Ridge regularisation prevents overfitting the meta-learner on the small 5-dimensional feature space
+**Implementation**: `utils/enhanced_model.py` → `EnhancedOligoAI.__init__()` and `forward()`
+
+#### 2. Cross-Attention Module
+
+When enabled (`use_cross_attention=True`), a multi-head attention layer allows ASO token representations to attend to the context RNA representations. This models the physical binding interaction between the ASO and its target.
+
+- **Query**: ASO embeddings `[B, L_aso, D]`
+- **Key/Value**: Context embeddings `[B, L_ctx, D]`
+- **Heads**: 8
+- **Dropout**: 0.1
+- **Residual**: LayerNorm(query + dropout(attention_output))
+
+**Implementation**: `utils/enhanced_model.py` → `CrossAttention`
+
+#### 3. Position-Aware Chemistry Embeddings
+
+Rather than using simple per-position sugar/backbone lookup embeddings, this module learns **position-specific** chemistry representations capturing the known biological effect that modification type matters differently at different positions (5' wing vs. gap vs. 3' wing in gapmers).
+
+```
+Position embedding (8-dim) + Sugar embedding (16-dim) + Backbone embedding (8-dim)
+    ↓ Linear fusion
+    → 24-dim position-aware chemistry vector per position
+```
+
+**Implementation**: `utils/enhanced_model.py` → `PositionAwareChemistryEmbedding`
+
+#### 4. Bottleneck Fusion Network
+
+Fuses the sequence embeddings (from RiNALMo, potentially enriched by cross-attention) with the chemistry embeddings:
+
+```
+Input:  [B, L_aso, D + 24]  (sequence + chemistry)
+    → Linear(D+24, 256) → LayerNorm → GELU → Dropout
+    → Linear(256, D) → LayerNorm
+Output: [B, L_aso, D]
+```
+
+**Implementation**: `utils/enhanced_model.py` → `BottleneckNetwork`
+
+#### 5. Auxiliary Feature Embeddings
+
+| Feature | Module | Input | Output Dim | Source |
+|---------|--------|-------|------------|--------|
+| **Motifs** | `MotifFeatureExtractor` | 12-dim count vector (5 bad + 5 good + 2 totals) | 16-dim | Sequence analysis |
+| **Genomic Region** | `GenomicRegionEmbedding` | Index 0-5 (exon/intron/5'UTR/3'UTR/splice/unknown) | 8-dim | `custom_id` / `gene_region` column |
+| **Structure Type** | `StructureTypeEmbedding` | Index 0-7 (unpaired/hairpin/multiloop/exterior/stem/bulge/internal/unknown) | 8-dim | Inferred from unpaired probabilities |
+| **ΔG (Thermo)** | Raw scalar | Gibbs free energy (kcal/mol) | 1-dim | Nearest-neighbor model or ViennaRNA |
+| **miRNA Overlap** | Binary indicator | Presence of miRNA seed motifs in context | 1-dim | Motif scan |
+| **Method × Dosage** | `method_emb` × dosage | Transfection method (4 types) scaled by log1p(dosage) | 8-dim | Experimental metadata |
+
+#### 6. MLP Prediction Head
+
+A 4-layer MLP with LayerNorm, GELU activations, and dropout:
+
+```
+298 → 256 → 128 → 64 → 1
+```
+
+LayerNorm is applied after the first two linear layers for training stability.
 
 ---
 
 ## Feature Engineering
 
-Model 04 extracts **533 raw features** from each sample, organised into seven categories. Features marked **(NEW)** are additions over Model 06.
+### Sequence Features (RiNALMo)
 
-### Sequence Features
+Raw nucleotide sequences (ASO and target RNA context) are tokenized using the RiNALMo `Alphabet` and encoded into dense representations by the transformer backbone. ASO sequences are truncated to 30 tokens; context sequences to 120 tokens.
 
-Extracted from the `aso_sequence_5_to_3` column.
+### Motif Features
 
-| Feature Group | Count | Description |
-|---------------|-------|-------------|
-| `length` | 1 | ASO sequence length |
-| `frac_{A,T,G,C}` | 4 | Nucleotide fractions |
-| `gc_content` | 1 | GC fraction = (G+C)/length |
-| `mw` | 1 | Estimated molecular weight |
-| `di_{AA..TT}` | 16 | Dinucleotide frequencies (4×4) |
-| `bad_{motif}`, `good_{motif}` | 10 | Per-motif counts (5 bad + 5 good from OligoAI) |
-| `total_bad_motifs`, `total_good_motifs` | 2 | Aggregated motif counts |
+Based on the OligoAI paper's findings:
 
-**Motifs** (from the OligoAI paper):
-- Bad: `GGGG`, `AAAA`, `TAAA`, `CTAA`, `CCTA`
-- Good: `TTGT`, `GTAT`, `CGTA`, `GTCG`, `GCGT`
+| Category | Motifs | Effect on Efficacy |
+|----------|--------|--------------------|
+| **Bad** | GGGG, AAAA, TAAA, CTAA, CCTA | Lower inhibition |
+| **Good** | TTGT, GTAT, CGTA, GTCG, GCGT | Higher inhibition |
 
-### k-mer Features (NEW)
+Extracted as a 12-dimensional vector: 5 bad counts + 5 good counts + total_bad + total_good.
 
-| Feature Group | Count | Description |
-|---------------|-------|-------------|
-| `kmer3_{AAA..TTT}` | 64 | Normalised tri-nucleotide frequencies |
-| `kmer4_{AAAA..TTTT}` | 256 | Normalised tetra-nucleotide frequencies |
+### Genomic Region
 
-k-mer features capture **local sequence order** that single-nucleotide and dinucleotide frequencies miss. For a sequence of length $L$, the normalised frequency of k-mer $m$ is:
+Parsed from `custom_id` and `gene_region` fields using keyword matching:
 
-$$f(m) = \frac{\text{count}(m)}{L - k + 1}$$
+| Region | Index | Typical Efficacy |
+|--------|-------|-----------------|
+| Exon/CDS | 0 | Higher |
+| Intron | 1 | Variable |
+| 5' UTR | 2 | Lower |
+| 3' UTR | 3 | Higher |
+| Splice junction | 4 | Variable |
+| Unknown | 5 | — |
 
-This adds 320 features capturing tri- and tetra-nucleotide composition patterns.
+### RNA Secondary Structure
 
-### Positional Property Encoding (NEW)
-
-| Feature Group | Count | Description |
-|---------------|-------|-------------|
-| `{start,end}_{0..4}_sin` | 10 | Sinusoidal position encoding |
-| `{start,end}_{0..4}_cos` | 10 | Cosine position encoding |
-| `{start,end}_{0..4}_{purine,amino,keto,pyrimidine}` | 40 | Nucleotide property vector |
-
-Model 06 used **sparse one-hot encoding** (60 binary features — 3 one-hot per nucleotide × 10 positions × 2 ends), which is wasteful. Model 04 replaces this with:
-
-1. **Sinusoidal encoding**: $\sin(i/5 \cdot \pi)$ and $\cos(i/5 \cdot \pi)$ — captures relative position
-2. **Nucleotide property vector**: Each nucleotide is encoded as 4 floats representing biochemical properties:
-
-| Nucleotide | Purine | Amino | Keto | Pyrimidine |
-|------------|--------|-------|------|------------|
-| A | 1 | 1 | 0 | 0 |
-| G | 1 | 0 | 1 | 0 |
-| C | 0 | 1 | 0 | 1 |
-| T | 0 | 0 | 1 | 1 |
-
-This produces **60 dense float features** encoding both position and nucleotide biochemistry, replacing the 60 sparse binary features of Model 06 with the same dimensional budget but much richer representation.
-
-### Chemistry Features
-
-Extracted from `sugar_mods` and `backbone_mods` columns.
-
-| Feature Group | Count | Description |
-|---------------|-------|-------------|
-| `sugar_{DNA,MOE,cEt,LNA}` | 4 | Raw counts per sugar type |
-| `sugar_{DNA,MOE,cEt,LNA}_frac` | 4 | Fraction per sugar type |
-| `backbone_PS`, `backbone_PO` | 2 | Backbone modification counts |
-| `backbone_PS_frac` | 1 | PS backbone fraction |
-| `is_gapmer` | 1 | Binary gapmer detection |
-| `gap_length` | 1 | DNA gap length |
-| `pos{0..4}_sugar_type` | 5 | Numerical sugar type at 5ʼ end positions |
-| `end{0..4}_sugar_type` | 5 | Numerical sugar type at 3ʼ end positions |
-| `pos{0..4}_is_PS` | 5 | PS backbone at 5ʼ end positions |
-| `end{0..4}_is_PS` | 5 | PS backbone at 3ʼ end positions |
-| `wing5_to_gap_transition` | 1 | Modified-to-DNA transition detected |
-| `wing3_modified` | 1 | 3ʼ wing has modifications |
-
-**Improvement over Model 06**: Sugar types at terminal positions are encoded as **numerical indices** (DNA=0, MOE=1, cEt=2, LNA=3) instead of one-hot, reducing dimensionality while preserving ordinal information about modification chemistry.
-
-### Context Features
-
-Extracted from the `rna_context` column (target mRNA flanking ±50 nt).
-
-| Feature Group | Count | Description |
-|---------------|-------|-------------|
-| `ctx_length` | 1 | Context sequence length |
-| `ctx_gc` | 1 | Context GC content |
-| `ctx_mirna_sites` | 1 | Count of miRNA seed motif matches |
-| `ctx_max_purine_run` | 1 | Longest purine run |
-| `ctx_max_pyrimidine_run` | 1 | Longest pyrimidine run |
-| `ctx_kmer3_{AAA..TTT}` | 64 | **(NEW)** Context tri-nucleotide frequencies |
-
-The context k-mers (64 features) capture target RNA local composition patterns that may affect ASO binding accessibility.
+- **Unpaired probabilities**: Computed per-nucleotide using RNAplfold (window=40, max span=1). Stored in `data/processed/structural_features.pkl`.
+- **Structure type**: Inferred from mean unpaired probability (mean > 0.7 → accessible, < 0.3 → hairpin/stem).
+- Projected into the embedding space and added residually to context representations.
 
 ### Thermodynamic Features
 
-| Feature | Description | Source |
-|---------|-------------|--------|
-| `delta_g` | Predicted binding free energy ($\Delta G$) via nearest-neighbour model | `scripts/thermo_features.py` |
-| `delta_g_per_nt` | $\Delta G$ normalised by ASO length | Computed |
+Binding free energy (ΔG) between ASO and target RNA computed using:
 
-### Enhanced (Biological) Features
+1. **Primary**: Nearest-neighbor thermodynamic parameters for DNA/RNA hybrids (Sugimoto et al., 1995). Zero external dependencies.
+2. **Optional**: ViennaRNA `RNAcofold` for more accurate predictions (requires ViennaRNA installation).
 
-| Feature Group | Count | Description |
-|---------------|-------|-------------|
-| `region_{0..5}` | 6 | One-hot genomic region (exon/intron/5ʼUTR/3ʼUTR/splice/unknown) |
-| `mirna_overlap` | 1 | Binary: target overlaps known miRNA binding site |
-| `structure_accessibility` | 1 | Proxy based on local GC content (1 − ctx_gc) |
+Stored in `data/processed/thermo_features.pkl`. The ΔG value is passed as a raw scalar to the MLP head.
 
-### Experimental Metadata
+### Chemistry Features
 
-| Feature | Description |
-|---------|-------------|
-| `log_dosage` | $\log(1 + \text{dosage})$ — handles missing values as 4000 nM default |
-| `method_gymnosis` | Binary: free uptake / gymnosis delivery |
-| `method_lipo` | Binary: lipofection delivery |
-| `method_electro` | Binary: electroporation delivery |
+Position-specific encoding of sugar and backbone modifications:
 
-### Complete Feature Summary
+| Modification Type | Vocabulary | Embedding Dim |
+|-------------------|-----------|---------------|
+| Sugar | DNA(0), MOE(1), cEt(2), LNA(3), PAD(4) | 16 |
+| Backbone | PO(0), PS(1), PAD(2) | 8 |
+| Position | 0..29 (max ASO length) | 8 |
 
-| Category | Feature Count | New in M04 |
-|----------|:------------:|:----------:|
-| Sequence (basic) | 35 | — |
-| k-mers (tri + tetra) | 320 | ✓ |
-| Positional encoding | 60 | ✓ (redesigned) |
-| Chemistry | 35 | — |
-| Context (basic) | 5 | — |
-| Context k-mers | 64 | ✓ |
-| Thermodynamic | 2 | — |
-| Enhanced (biological) | 8 | — |
-| Metadata | 4 | — |
-| **Total raw** | **533** | **+384 new** |
-| **After selection** | **492** | — |
+These are fused into a 24-dim vector per position using a learned linear projection.
+
+### miRNA Binding Site Overlap
+
+A binary indicator (0/1) for whether the RNA context contains any of six known miRNA target seed sequences (mir-15/16, mir-27, let-7, mir-17, mir-19, mir-17 family).
 
 ---
 
-## Feature Selection
+## Loss Functions
 
-Model 06 passed all features through without any selection. Model 04 applies a **two-stage filter** to remove redundant and uninformative features.
+Model 05 supports five loss configurations:
 
-### Stage 1 — Correlation Pruning
+### 1. MSE Loss (`mse`)
+Standard mean squared error:
 
-For every pair of features with Pearson $|r| > 0.95$ (configurable via `--corr_threshold`), one feature is dropped (the one encountered second in column order). This removes multicollinearity that can harm Ridge meta-learner stability and inflate SHAP attributions.
+$$
+\mathcal{L}_{\text{MSE}} = \frac{1}{N}\sum_{i=1}^{N}(y_i - \hat{y}_i)^2
+$$
 
-**Result**: 533 → 492 features (41 removed)
+### 2. ListNet Loss (`listnet`)
+A listwise ranking loss that treats the batch as a ranked list:
 
-Examples of dropped features: `backbone_PS_frac` (redundant with `backbone_PS`), `delta_g_per_nt` (highly correlated with `delta_g`), several positional one-hot features correlated with property encodings.
+$$
+\mathcal{L}_{\text{ListNet}} = -\sum_{i} P_{\text{true}}(i) \cdot \log P_{\text{pred}}(i)
+$$
 
-### Stage 2 — Mutual-Information Pruning
+where $P(i) = \text{softmax}(y_i / \tau)$ with temperature $\tau$.
 
-Mutual information is computed between every remaining feature and the target (`inhibition_percent`) using 5 nearest neighbours. Features below the 5th percentile (configurable via `--mi_quantile`) are considered uninformative and removed.
+### 3. RankNet Loss (`ranknet`)
+A pairwise ranking loss (Burges et al., 2005):
 
-**Result**: 492 → 492 features (0 removed — all features carry some signal)
+$$
+\mathcal{L}_{\text{RankNet}} = -\bar{P}_{ij}\log(\hat{P}_{ij}) - (1-\bar{P}_{ij})\log(1-\hat{P}_{ij})
+$$
 
-The full feature selection report (including MI scores for every feature) is saved to `results/04_enhanced_ensemble/feature_selection_report.json`.
+Efficient implementation samples up to 512 random pairs per batch.
 
----
+### 4. Mixed Loss (`mixed`) — **CLI Default**
 
-## Hyperparameter Optimisation
+$$
+\mathcal{L}_{\text{mixed}} = \alpha \cdot \mathcal{L}_{\text{MSE}} + (1-\alpha) \cdot \mathcal{L}_{\text{ListNet}}
+$$
 
-### Optuna Bayesian Search
+with $\alpha = 0.5$. Balances pointwise accuracy with ranking quality.
 
-When run without `--skip_hpo`, Model 04 uses **Optuna** to run Bayesian hyperparameter optimisation for each base learner independently:
+### 5. RankNet Mixed (`ranknet_mixed`) — **Used in Actual Training Run**
 
-| Model | Search Space | Key Parameters |
-|-------|-------------|-------|
-| **RF** | `n_estimators` ∈ [100, 500], `max_depth` ∈ [5, 20], `min_samples_split` ∈ [2, 20], `min_samples_leaf` ∈ [1, 15] | 4 parameters |
-| **GB** | `n_estimators` ∈ [100, 500], `max_depth` ∈ [3, 10], `learning_rate` ∈ [0.01, 0.3] (log), `subsample` ∈ [0.6, 1.0] | 5 parameters |
-| **XGB** | `n_estimators` ∈ [100, 500], `max_depth` ∈ [3, 10], `learning_rate` ∈ [0.01, 0.3] (log), `reg_alpha/lambda` ∈ [1e-3, 10] (log) | 7 parameters |
-| **LGB** | Same as XGB | 7 parameters |
-| **CAT** | `iterations` ∈ [100, 500], `depth` ∈ [3, 10], `learning_rate` ∈ [0.01, 0.3] (log), `l2_leaf_reg` ∈ [1e-3, 10] (log) | 5 parameters |
+$$
+\mathcal{L}_{\text{ranknet-mixed}} = \alpha \cdot \mathcal{L}_{\text{MSE}} + (1-\alpha) \cdot \mathcal{L}_{\text{RankNet}}
+$$
 
-- **Objective**: Maximise validation Spearman $\rho$
-- **Default trials**: 50 per model (configurable via `--optuna_trials`)
-- **Direction**: `maximize`
-- **Output**: Full trial history saved to `logs/optuna_{model}_trials.json`
+> **Note**: The training run that produced the saved checkpoints used `ranknet_mixed` (confirmed by `hparams.yaml`), not the CLI default `mixed`. This combines MSE for pointwise accuracy with RankNet for pairwise ranking quality.
 
-### Default Hyperparameters
-
-When running with `--skip_hpo`, Model 04 uses the following defaults (with **stronger regularisation** than Model 06):
-
-| Parameter | M06 Value | M04 Default | Rationale |
-|-----------|-----------|-------------|-----------|
-| `n_estimators` | 200 | 300 | More trees for ensemble diversity |
-| `max_depth` (boosters) | 12 | 5 | Stronger depth control to prevent overfitting |
-| `learning_rate` | 0.1 | 0.05 | Slower learning for better generalisation |
-| `reg_alpha` (XGB/LGB) | 0.0 | 0.1 | L1 regularisation |
-| `reg_lambda` (XGB/LGB) | 1.0 | 1.0 | L2 regularisation (unchanged) |
-| `subsample` | 1.0 | 0.8 | Row subsampling to reduce variance |
-| `colsample_bytree` | 1.0 | 0.8 | Column subsampling for decorrelation |
+**Implementation**: `utils/enhanced_model.py` → `ListNetLoss`, `RankNetLoss`, `RankingMSELoss`
 
 ---
 
@@ -411,342 +331,419 @@ When running with `--skip_hpo`, Model 04 uses the following defaults (with **str
 
 ### Data Loading & Splitting
 
-```python
-# Patent-level split (same as all other models in the pipeline)
-df = pd.read_csv("data/raw/aso_inhibitions_21_08_25_incl_context_w_flank_50_df.csv")
-train_df, val_df, test_df = create_patent_split(df, random_state=42)
-```
+1. **Data source**: `data/raw/aso_inhibitions_21_08_25_incl_context_w_flank_50_df.csv` (~180K records)
+2. **Split method**: Patent-level split (all ASOs from the same patent in the same split)
+   - 80% train / 10% validation / 10% test
+   - Patent ID extracted from `custom_id` (text before `_table_`)
+   - Deterministic with `random_state=42`
+3. **Target scaling**: StandardScaler fitted on training set, applied to val/test
+4. **Dataset class**: `EnhancedOligoAIDataset` (from `utils/enhanced_dataset.py`)
+5. **Collation**: `enhanced_collate_fn` — pads variable-length sequences and aligns chemistry
 
-| Split | Samples | Purpose |
-|-------|--------:|---------|
-| Train | 142,861 | Model fitting |
-| Validation | 12,391 | HP tuning, early stopping, per-model evaluation |
-| Test | 23,372 | Final held-out evaluation |
+**DataLoader configuration**:
+| Parameter | Value | Rationale |
+|-----------|-------|-----------|
+| `num_workers` | min(16, cpu_count) | Maximize CPU utilization |
+| `pin_memory` | True | Faster GPU transfer |
+| `prefetch_factor` | 4 | Preload batches in RAM |
+| `persistent_workers` | True | Avoid worker restart overhead |
 
-All samples from the same patent are kept within a single split to prevent data leakage (ASOs targeting the same gene in the same experiment are correlated).
+### Gradual Unfreezing Strategy
 
-### Feature Extraction
+The RiNALMo backbone is trained with a **gradual unfreezing** schedule to prevent catastrophic forgetting of pretrained representations:
 
-For each sample, `extract_all_features()` calls:
-1. `extract_sequence_features()` — length, nucleotide fractions, GC, MW, dinucleotides, motifs, **k-mers**, **positional encoding**
-2. `extract_chemistry_features()` — sugar/backbone counts and fractions, gapmer detection, position-aware sugar types
-3. `extract_context_features()` — context GC, purine/pyrimidine runs, miRNA sites, **context k-mers**
-4. Thermodynamic: `compute_delta_g_nn()` when available
-5. Enhanced: `parse_genomic_region()`, `check_mirna_overlap()` when available
-6. Metadata: log-dosage, transfection method encoding
+| Epoch Range | Strategy |
+|-------------|----------|
+| 0–4 | RiNALMo fully frozen; only head parameters train |
+| 5–7 | Top 3 transformer blocks unfrozen |
+| 8–10 | Top 6 blocks unfrozen |
+| 11–13 | Top 9 blocks unfrozen |
+| 14+ | Top 12+ blocks unfrozen (depends on model size) |
 
-Speed: ~1,800–2,200 samples/sec (~1.3 min for 142K train samples).
+Additionally, the LM receives a **reduced learning rate** (`lr × lm_lr_factor`) via separate optimizer parameter groups.
 
-### Feature Selection & Scaling
+**Implementation**: `train.py` → `GradualUnfreezeCallback`
 
-1. **Correlation pruning**: Remove one of each pair with $|r| > 0.95$
-2. **MI pruning**: Remove features below 5th percentile of mutual-information scores
-3. **StandardScaler**: Zero-mean, unit-variance normalisation (fitted on train only)
+### Hyperparameter Configurations
 
-### Base Model Training
+Four presets are provided:
 
-Each of the 5 base models is trained independently on the full training set. Validation metrics are logged and saved to `base_model_metrics.json`.
+| Config | Backbone | LR | LM LR Factor | Batch Size | Cross-Attn | Pos-Chem | VRAM Target |
+|--------|----------|-----|-------------|------------|------------|----------|-------------|
+| `mega` | mega | 5e-5 | 0.05 | 32 | ✓ | ✓ | 24+ GB |
+| `giga` | giga | 2e-5 | 0.02 | 8 | ✓ | ✓ | 12+ GB |
+| `mega_light` | mega | 5e-5 | 0.05 | 16 | ✗ | ✓ | 6 GB |
+| `micro_full` | micro | 1e-4 | 0.10 | 48 | ✓ | ✓ | 4 GB |
 
-### Stacking Ensemble Construction
+### Training Loop & Callbacks
 
-```python
-StackingRegressor(
-    estimators=[(name, model) for name, model in base_models],
-    final_estimator=Ridge(alpha=1.0),
-    cv=5,
-    n_jobs=1,       # Sequential to avoid GPU contention
-    passthrough=False,
-)
-```
+| Callback | Purpose |
+|----------|---------|
+| `ModelCheckpoint` | Save top-3 checkpoints by `val_spearman` + last checkpoint |
+| `EarlyStopping` | Stop after 15 epochs with no improvement (min_delta=0.001) |
+| `LearningRateMonitor` | Log LR per epoch |
+| `GradualUnfreezeCallback` | Progressive LM unfreezing |
+| `MetricsCallback` | Track best Spearman / enrichment / epoch |
 
-The stacking process:
-1. Splits training data into 5 folds
-2. For each fold: trains all 5 base models on 4/5, predicts on held-out 1/5
-3. Concatenates OOF predictions → $N \times 5$ matrix
-4. Fits Ridge on OOF predictions → target
-5. Retrains all base models on full training set for inference
+**Optimizer**: AdamW with separate parameter groups:
+- Head parameters: `lr`
+- RiNALMo parameters: `lr × lm_lr_factor`
+- Weight decay: 0.01
 
----
+**Scheduler**: CosineAnnealingWarmRestarts (`T_0=10`, `T_mult=2`, `eta_min=1e-6`)
 
-## GPU Acceleration
+**Precision**: FP16 mixed precision (`16-mixed`) for memory efficiency.
 
-Model 04 auto-detects GPU availability at startup via PyTorch's `torch.cuda.is_available()` (with nvidia-smi fallback). When a GPU is detected:
+**Gradient clipping**: Max norm = 1.0
 
-| Model | GPU Parameter | Speedup (vs CPU) |
-|-------|--------------|:-----------------:|
-| **XGBoost** | `device="cuda"` | ~2× (12.4s → 6.0s) |
-| **CatBoost** | `task_type="GPU"`, `bootstrap_type="Bernoulli"` | ~3× (10.2s → 3.1s) |
-| LightGBM | CPU only (pip build lacks GPU) | — |
-| RF, GB | CPU only (sklearn, no GPU support) | — |
-
-**GPU contention**: The `StackingRegressor` uses `n_jobs=1` (sequential fold fitting) to prevent multiple GPU-accelerated models from fighting over device 0 during cross-validation. Individual base model training is parallelised via each model's own `n_jobs=-1` (CPU models) or GPU offloading.
-
-If no GPU is available, all models fall back to CPU automatically — no code changes needed.
+**Gradient accumulation**: Configurable (default: 2 steps), effective batch size = `batch_size × grad_accum`.
 
 ---
 
 ## Evaluation Protocol
 
-Model 04 follows the OligoAI paper's evaluation methodology with additional metrics.
+Following the OligoAI methodology (see `docs/project_requirements.txt` §5):
 
 ### Data Split (§5.1)
 
-Patent-level stratification ensures zero leakage between splits. Identical to all other models in the pipeline.
+The dataset is split at the **patent level** using `create_patent_split()` from `utils/dataset.py`:
+- 80% train / 10% validation / 10% test
+- All ASOs originating from the same patent belong to the same split
+- Patent ID is extracted from `custom_id` (text before `_table_`)
+- Deterministic with `random_state=42`
+
+Random row-level or gene-level splits are not used.
 
 ### Spearman Rank Correlation — `mean_spearman_corr` (§5.2)
 
-Model 04 computes **both** global and per-screen Spearman correlations:
+Per the OligoAI paper, Spearman correlation must be computed as:
+1. Group predictions and ground-truth values by **experimental screen** (patent)
+2. Compute Spearman ρ within each screen (groups with ≥3 samples)
+3. Report the **mean** across all screens
 
-1. **Global Spearman** ($\rho_{\text{global}}$): Standard rank correlation across all test samples
-2. **Per-screen Spearman** ($\rho_{\text{screen}}$): For each patent/screen with $\geq 5$ samples, compute individual Spearman $\rho$, then average across screens
+$$
+\rho_{\text{screen}} = 1 - \frac{6\sum d_i^2}{n(n^2-1)}
+$$
 
-The per-screen metric is the **primary metric** defined in OligoAI §5.2, as it measures how well the model ranks ASOs within each experimental context. Model 06 only reported global Spearman.
+$$
+\text{mean-spearman-corr} = \frac{1}{|S|}\sum_{s \in S} \rho_s
+$$
+
+> **⚠️ Implementation note**: The `train.py` script computes **global Spearman** (single correlation over the entire test set) for simplicity during training. For the official per-screen metric matching the OligoAI definition, use the standalone evaluation script:
+> ```bash
+> python scripts/evaluate.py --model 05 --checkpoint results/05_oligoai_stage3_stabilized/weights/last.ckpt
+> ```
+> The `evaluate.py` script groups by patent ID and computes mean Spearman across screens, producing results in the required `metrics.json` format.
 
 ### Enrichment Factor — `top_pred_target_ratio_median` (§5.3)
 
-Measures overlap between predicted top-10% and actual top-10% ASOs:
+Following the OligoAI definition:
+1. Rank ASOs by predicted inhibition
+2. Select the top 10% predicted ASOs
+3. Compute the fraction of these that are also in the top 10% by true inhibition
+4. Compute enrichment as:
 
 $$
-\text{Enrichment} = \frac{|\text{top-10-pred} \cap \text{top-10-true}|}{0.1 \times N_{\text{top}}}
+\text{Enrichment Factor} = \frac{\text{Hit rate in predicted top 10\%}}{0.10}
 $$
 
-Random baseline enrichment is $1.0\times$. Higher is better.
-
-### Additional Metrics
-
-| Metric | Description |
-|--------|-------------|
-| $R^2$ | Coefficient of determination |
-| MAE | Mean absolute error (in % inhibition) |
-| RMSE | Root mean squared error |
-| Pearson $r$ | Linear correlation |
+An enrichment of 1.0× means random performance; higher is better.
 
 ### Required Output Format — `metrics.json` (§7)
 
-The output `metrics.json` contains all metrics for all splits, per-screen details, base model comparison, and timing information. See [Output Files Reference](#output-files-reference) for full structure.
+All metrics are written to `results/05_oligoai_stage3_stabilized/metrics.json` in the required format:
 
----
+```json
+{
+  "train": {
+    "r2": ..., "mae": ..., "rmse": ...,
+    "mean_spearman_corr": ..., "top_pred_target_ratio_median": ...
+  },
+  "val": { ... },
+  "test": { ... }
+}
+```
 
-## SHAP Explainability Analysis
-
-Model 04 runs a full **SHAP (SHapley Additive exPlanations)** analysis after training:
-
-1. **Explainer**: `TreeExplainer` on the best base model with `feature_importances_` (typically Random Forest)
-2. **Sample size**: 2,000 test samples (subsampled for speed)
-3. **Outputs**:
-   - `shap_values.csv` — Raw SHAP values for each sample × feature (20 MB)
-   - `shap_importance.csv` — Mean |SHAP| per feature, sorted descending
-   - `shap_bar_top30.png` — Horizontal bar chart of top 30 features
-   - `shap_beeswarm.png` — Beeswarm plot showing SHAP value distribution
-   - `shap_dependence_top1.png` — Dependence plot for the most important feature
-
-**Fallback**: If the stacking ensemble's internal estimators don't support TreeExplainer, a `KernelExplainer` is used (slower, on 500 samples with 100-sample background).
+Key names match the project deliverable specification:
+- `r2` — Coefficient of determination
+- `mae` — Mean absolute error
+- `rmse` — Root mean squared error
+- `mean_spearman_corr` — Mean Spearman correlation (per-screen when using `evaluate.py`)
+- `top_pred_target_ratio_median` — Enrichment factor
 
 ---
 
 ## Results & Analysis
 
-### Base Model Comparison
+### Test Set Performance
 
-Individual base model performance on the **validation** set (default hyperparameters, `--skip_hpo`):
+| Metric | Model 05 | OligoAI Baseline |
+|--------|----------|-----------------|
+| **Spearman ρ** | 0.366 | 0.419 |
+| **Enrichment** | 2.61× | ~3× |
+| **R²** | 0.157 | — |
+| **MAE** | 0.731 | — |
+| **RMSE** | 0.888 | — |
 
-| Model | Val Spearman $\rho$ | Val $R^2$ | Val MAE | Train Time |
-|-------|:-------------------:|:---------:|:-------:|:----------:|
-| RF | 0.3696 | 0.1050 | 22.37 | 20.5s |
-| GB | 0.3982 | 0.1191 | 21.89 | 554.9s |
-| XGB (GPU) | 0.3906 | 0.1292 | 21.79 | 6.0s |
-| LGB | 0.3856 | 0.1230 | 21.86 | 51.3s |
-| CAT (GPU) | 0.3857 | 0.1329 | 21.84 | 3.1s |
+Test set contains **23,372 samples** (patent-level hold-out).
 
-**Observations**:
-- GB achieves the best individual val Spearman but is by far the slowest (no GPU)
-- XGB and CAT benefit enormously from GPU acceleration (6s and 3s respectively)
-- CatBoost has the best $R^2$ among individual models
-- All individual models fall within a narrow $\rho$ band (0.370–0.398)
+### Actual Configuration (from `hparams.yaml`)
 
-### Stacking Ensemble Performance
+The training run that produced the saved checkpoints used the following hyperparameters, confirmed by `results/05_oligoai_stage3_stabilized/logs/version_0/hparams.yaml`:
 
-| Split | $R^2$ | MAE | RMSE | Global $\rho$ | Per-screen $\rho$ | Screens | Enrichment |
-|-------|:-----:|:---:|:----:|:-------------:|:-----------------:|:-------:|:----------:|
-| Train | 0.4126 | 17.47 | 21.47 | 0.6469 | 0.3828 | 294 | 4.26× |
-| Val | 0.1274 | 21.70 | 25.85 | 0.3906 | 0.3227 | 36 | 2.27× |
-| **Test** | **0.1765** | **20.17** | **24.57** | **0.4049** | **0.2473** | **38** | **2.40×** |
+| Parameter | Value |
+|-----------|-------|
+| Backbone (`lm_config_name`) | `mega` |
+| Batch size | 12 |
+| **Loss function** (`loss_type`) | **`ranknet_mixed`** |
+| Alpha (MSE vs. RankNet weight) | 0.5 |
+| Learning rate (head) | 5e-05 |
+| LM LR factor | 0.05 (→ LM LR = 2.5e-06) |
+| Weight decay | 0.01 |
+| Cross-attention | Enabled |
+| Position chemistry | Enabled |
+| Motifs | Enabled |
+| Genomic region | Enabled |
+| Structure type | Enabled |
+| Thermodynamic features | Enabled |
+| Dropout (bottleneck) | 0.2 |
+| Dropout (MLP) | 0.3 |
+| Freeze LM epochs | 5 |
 
-### Comparison with Baselines
+### Training History
 
-| Model | Test Global $\rho$ | Test Per-screen $\rho$ | Test Enrichment |
-|-------|:------------------:|:---------------------:|:---------------:|
-| **OligoAI** (paper) | 0.419 | 0.419 | ~3× |
-| Model 06 (Voting) | 0.384 | — (not computed) | — |
-| **Model 04 (Stacking)** | **0.405** | **0.247** | **2.40×** |
+Training ran for **20 epochs** (2,381 optimizer steps, ~119 steps/epoch) with gradual unfreezing of the RiNALMo backbone. The learning rate followed a **CosineAnnealingWarmRestarts** schedule with `T_0=10` (restart at epoch 10).
 
-- **vs Model 06**: Global Spearman **+5.5%** improvement (0.384 → 0.405)
-- **vs OligoAI**: Global Spearman **−3.4%** (0.419 → 0.405), per-screen Spearman **−41.0%** (0.419 → 0.247)
+#### Epoch-by-Epoch Metrics
 
-**Analysis**: The stacking ensemble significantly improves over Model 06's simple voting approach. The gap to OligoAI's global Spearman is narrowing (from 9.1% deficit to 3.4%), and the enrichment factor (2.40×) approaches OligoAI's ~3×. The per-screen Spearman (0.247) is lower than global, which is expected: per-screen evaluation is a harder metric that requires the model to rank correctly *within* small per-patent groups. Further gains may require Optuna HPO, deeper features, or hybrid approaches.
+| Epoch | Phase | Mean Train Loss | Val Loss | Val Spearman | Val Enrichment | Note |
+|------:|:------|----------------:|---------:|-------------:|:--------------:|:-----|
+| 0 | Frozen LM | 0.7645 | 0.7955 | 0.2228 | 1.70× | Initial |
+| 1 | Frozen LM | 0.7525 | 0.7699 | 0.3409 | 1.79× | +53% Spearman |
+| 2 | Frozen LM | 0.7397 | 0.7817 | 0.3036 | 1.55× | |
+| 3 | Frozen LM | 0.7251 | 0.7648 | 0.3358 | 1.79× | |
+| 4 | Frozen LM | 0.7272 | 0.7624 | 0.3728 | 1.79× | End frozen phase |
+| 5 | Top-3 unfrozen | 0.7360 | 0.7587 | 0.3614 | 1.97× | LM layers start training |
+| 6 | Top-3 unfrozen | 0.7398 | 0.7608 | 0.3551 | 1.82× | |
+| 7 | Top-3 unfrozen | 0.7118 | 0.7569 | 0.3732 | 1.99× | |
+| 8 | Top-6 unfrozen | 0.7029 | 0.7613 | 0.3613 | 1.86× | |
+| 9 | Top-6 unfrozen | 0.7034 | 0.7598 | 0.3697 | 1.86× | |
+| 10 | Top-6 unfrozen | 0.7074 | 0.7631 | 0.3522 | 1.93× | LR restart |
+| 11 | Top-9 unfrozen | 0.7143 | 0.7670 | 0.3753 | 1.95× | |
+| 12 | Top-9 unfrozen | 0.7392 | 0.7634 | 0.3597 | 1.78× | |
+| **13** | **Top-9 unfrozen** | **0.7075** | **0.7459** | **0.3856** | **2.02×** | **Best checkpoint** |
+| 14 | Top-12 unfrozen | 0.7270 | 0.7653 | 0.3761 | 1.86× | |
+| 15 | Top-12 unfrozen | 0.7111 | 0.7898 | 0.3377 | 1.80× | Val loss spike |
+| 16 | Top-12 unfrozen | 0.6849 | 0.7616 | 0.3538 | 1.79× | |
+| 17 | Top-12 unfrozen | 0.6765 | 0.7772 | 0.3381 | 1.93× | |
+| 18 | Top-12 unfrozen | 0.7278 | 0.7884 | 0.3416 | 1.71× | |
+| 19 | Top-12 unfrozen | 0.6687 | 0.7688 | 0.3777 | 1.86× | Final epoch |
 
-### Top SHAP Features
+#### Training Dynamics
 
-The 20 most influential features by mean \|SHAP value\|:
+1. **Frozen LM phase (epochs 0–4)**: The MLP head trains while the RiNALMo backbone is frozen. Validation Spearman rises rapidly from 0.223 to 0.373 (+67%), demonstrating that even frozen pretrained embeddings carry significant predictive signal.
 
-| Rank | Feature | Mean \|SHAP\| | Category |
-|:----:|---------|:-------------:|----------|
-| 1 | `backbone_PS` | 1.042 | Chemistry — PS backbone count |
-| 2 | `gc_content` | 0.714 | Sequence — GC fraction |
-| 3 | `backbone_PO` | 0.609 | Chemistry — PO backbone count |
-| 4 | `frac_A` | 0.594 | Sequence — adenine fraction |
-| 5 | `pos1_is_PS` | 0.569 | Chemistry — 2nd position is PS |
-| 6 | `total_bad_motifs` | 0.541 | Sequence — aggregate bad motifs |
-| 7 | `di_AA` | 0.483 | Sequence — AA dinucleotide freq |
-| 8 | `di_GT` | 0.438 | Sequence — GT dinucleotide freq |
-| 9 | `method_electro` | 0.411 | Metadata — electroporation |
-| 10 | `frac_T` | 0.380 | Sequence — thymine fraction |
-| 11 | `ctx_kmer3_GGG` | 0.343 | Context — GGG trimer in target |
-| 12 | `frac_G` | 0.273 | Sequence — guanine fraction |
-| 13 | `method_gymnosis` | 0.256 | Metadata — free uptake |
-| 14 | `sugar_cEt` | 0.253 | Chemistry — cEt sugar count |
-| 15 | `log_dosage` | 0.244 | Metadata — log-transformed dose |
-| 16 | `kmer3_AAA` | 0.237 | **k-mer** — AAA trimer freq |
-| 17 | `di_TG` | 0.221 | Sequence — TG dinucleotide freq |
-| 18 | `frac_C` | 0.212 | Sequence — cytosine fraction |
-| 19 | `di_GC` | 0.211 | Sequence — GC dinucleotide freq |
-| 20 | `ctx_kmer3_GGG` | — | Context — (see rank 11) |
+2. **Gradual unfreezing (epochs 5–13)**: As transformer layers are progressively unfrozen (top-3 → top-6 → top-9), performance continues to climb. The best result occurs at **epoch 13** (end of the top-9 phase) with val_spearman = 0.386 and val_enrichment = 2.02×. Training loss decreases steadily (0.736 → 0.708).
 
-**Key insight**: Backbone chemistry (`backbone_PS`, `backbone_PO`, `pos1_is_PS`) dominates feature importance, followed by sequence composition (`gc_content`, `frac_A`, `total_bad_motifs`). The new k-mer features (`kmer3_AAA`, `ctx_kmer3_GGG`) appear in the top 20, validating their addition. Experimental metadata (`method_electro`, `method_gymnosis`, `log_dosage`) is also highly influential, confirming that experimental context matters significantly for efficacy prediction.
+3. **Full unfreezing (epochs 14–19)**: After all 12 mega layers are unfrozen, performance becomes more volatile. Validation loss occasionally spikes (0.790 at epoch 15, 0.788 at epoch 18), and val_spearman oscillates between 0.338–0.378 without surpassing the epoch-13 peak. Train loss continues to decrease (0.727 → 0.669), indicating emerging overfitting.
+
+4. **Convergence assessment**: Training did not reach early stopping (patience=15 would trigger at epoch 28). The increasing val–train loss gap in late epochs (train: 0.669, val: 0.769 at epoch 19) confirms overfitting. The best checkpoint at epoch 13 was correctly selected.
+
+#### Learning Rate Schedule
+
+| Epoch | Head LR | LM LR | Event |
+|------:|--------:|------:|:------|
+| 0 | 5.00e-05 | 2.50e-06 | Initial (LM frozen) |
+| 4 | 1.98e-05 | 9.91e-07 | End frozen phase, near LR minimum |
+| 5 | 1.75e-05 | 8.75e-07 | LM starts training |
+| 9 | 2.20e-06 | 1.10e-07 | LR approaching trough |
+| 10 | 5.00e-05 | 2.50e-06 | **CosineAnnealing restart** (T_0=10) |
+| 13 | 4.53e-05 | 2.27e-06 | Best epoch |
+| 19 | 2.93e-05 | 1.87e-06 | Final epoch |
+
+The LR schedule uses `CosineAnnealingWarmRestarts(T_0=10, T_mult=2, eta_min=1e-6)`. The warm restart at epoch 10 coincides with the transition from top-6 unfreezing, providing a fresh learning rate as more parameters become trainable.
+
+#### Saved Checkpoints
+
+| File | Size | Description |
+|------|-----:|:------------|
+| `enhanced-epoch=13-spearman=val_spearman=0.386.ckpt` | 590 MB | **Best** (top-1 by val_spearman) |
+| `enhanced-epoch=14-spearman=val_spearman=0.376.ckpt` | 590 MB | Top-2 |
+| `enhanced-epoch=19-spearman=val_spearman=0.378.ckpt` | 590 MB | Top-3 |
+| `last.ckpt` | 590 MB | Final epoch (epoch 19) |
+
+Total checkpoint storage: ~2.3 GB. Each checkpoint contains the full model state dict (RiNALMo mega backbone + all feature heads).
+
+### Comparison with OligoAI Baseline (§7.3)
+
+As required by the project deliverables, direct comparison with OligoAI:
+
+| Metric | Model 05 | OligoAI Paper | Δ | Status |
+|--------|----------|---------------|---|--------|
+| **Spearman ρ** | 0.366 | ≈ 0.42 | −0.054 (−12.6%) | Below baseline |
+| **Enrichment** | 2.61× | ≈ 3× | −0.39 | Below baseline |
+
+The OligoAI baseline values come from the OligoAI research paper (see `docs/reference_paper.pdf`).
+
+> Per the project requirements (§6): "It is acceptable if no approach outperforms OligoAI, as long as the validation protocol is followed, results are reported clearly, and limitations are analyzed thoughtfully."
+
+### Analysis
+
+- The model achieves a test Spearman of **0.366**, which is 12.6% below the OligoAI baseline of ≈0.42. As shown in the training history, the best validation Spearman of **0.386** (epoch 13) drops to 0.366 on the test set — a modest gap suggesting limited overfitting at the best checkpoint.
+- The best performance coincides with the **top-9 unfreezing phase** (not full unfreezing), suggesting that exposing all 12 transformer layers at once (epochs 14+) introduces instability that degrades generalization.
+- The enrichment factor of **2.61×** shows the model still substantially outperforms random selection (1.0×) for identifying high-efficacy ASOs.
+- Predictions are on a standardized (z-score) scale since the target was scaled with `StandardScaler`.
+- Training loss continued decreasing through epoch 19 (0.669) while validation loss rose (0.769), confirming that additional epochs would increase overfitting rather than improve performance.
 
 ---
 
 ## Reproduction Instructions
 
-### Quick Start
+### Prerequisites
 
 ```bash
-# Activate environment
+# Python 3.9+
+conda create -n aso_pred python=3.9 -y
 conda activate aso_pred
 
-# Run with default hyperparameters (fastest — ~2 hours with GPU)
-python models/04_enhanced_ensemble/train.py --skip_hpo
+# Core dependencies
+pip install -r docker/requirements.txt
+
+# Optional: ViennaRNA for thermodynamic features
+conda install -c bioconda viennarna
 ```
 
-### Full Run with Optuna HPO
+### Pre-compute Features (Optional)
 
 ```bash
-# Run with Bayesian hyperparameter optimisation (50 trials per model)
-python models/04_enhanced_ensemble/train.py --optuna_trials 50
+# RNA structural features (requires ViennaRNA — RNAplfold)
+python utils/rna_features.py
 
-# Or with more trials for thorough search
-python models/04_enhanced_ensemble/train.py --optuna_trials 200
+# Thermodynamic features (ΔG)
+python utils/thermo_features.py
 ```
 
-### Using run.sh / Docker
+Output files:
+- `data/processed/structural_features.pkl`
+- `data/processed/thermo_features.pkl`
+
+If these files do not exist, the model trains without them (zero-filled fallback).
+
+### Training
 
 ```bash
-# Via the unified run script
-bash scripts/run.sh 04
+# Default (mega_light config — fits 6GB VRAM)
+python models/05_oligoai_stage3_stabilized/train.py
 
-# Via Docker (GPU passthrough)
-docker run --gpus all -v $(pwd)/data:/app/data -v $(pwd)/results:/app/results \
-  aso-pred bash scripts/run.sh 04
+# Specific configuration
+python models/05_oligoai_stage3_stabilized/train.py --config mega --batch_size 32
+
+# Full options
+python models/05_oligoai_stage3_stabilized/train.py \
+    --config giga \
+    --batch_size 8 \
+    --epochs 50 \
+    --grad_accum 4 \
+    --loss mixed
 ```
+
+### Using run.sh / Docker (§7.4)
+
+The project provides shell scripts and a Docker setup for reproducibility:
+
+```bash
+# Via run.sh (recommended)
+./scripts/run.sh 05
+
+# Via run.sh with extra arguments
+./scripts/run.sh 05 --config mega --batch_size 16
+
+# Via Docker
+./scripts/build.sh                    # Build image
+docker run --gpus all \
+    -v $(pwd)/data:/app/data \
+    -v $(pwd)/results:/app/results \
+    aso-prediction bash scripts/run.sh 05
+```
+
+### Post-Training Evaluation (Official Metrics)
+
+To compute the official per-screen Spearman metric matching OligoAI's definition:
+
+```bash
+python scripts/evaluate.py --model 05 \
+    --checkpoint results/05_oligoai_stage3_stabilized/weights/last.ckpt
+```
+
+This overwrites `metrics.json` with per-screen `mean_spearman_corr` values.
 
 ### CLI Arguments
 
-| Argument | Type | Default | Description |
-|----------|------|---------|-------------|
-| `--skip_hpo` | flag | `False` | Skip Optuna HPO, use default hyperparameters |
-| `--optuna_trials` | int | 50 | Number of Optuna trials per base model |
-| `--corr_threshold` | float | 0.95 | Correlation pruning threshold |
-| `--mi_quantile` | float | 0.05 | Mutual-information quantile cutoff |
+| Argument | Type | Default | Choices | Description |
+|----------|------|---------|---------|-------------|
+| `--config` | str | `mega_light` | `mega`, `giga`, `mega_light`, `micro_full` | Preset configuration |
+| `--batch_size` | int | None | — | Override batch size from config |
+| `--epochs` | int | 50 | — | Maximum training epochs |
+| `--grad_accum` | int | 2 | — | Gradient accumulation steps |
+| `--loss` | str | `mixed` | `mse`, `listnet`, `ranknet`, `mixed`, `ranknet_mixed` | Loss function |
+
+### Output
+
+```
+results/05_oligoai_stage3_stabilized/
+├── metrics.json          # Train/val/test metrics + config + comparison
+├── predictions.csv       # Test set y_true vs y_pred (23,373 rows incl. header)
+├── weights/              # PyTorch Lightning checkpoints (~590 MB each)
+│   ├── enhanced-epoch=13-spearman=val_spearman=0.386.ckpt  (best)
+│   ├── enhanced-epoch=14-spearman=val_spearman=0.376.ckpt  (top-2)
+│   ├── enhanced-epoch=19-spearman=val_spearman=0.378.ckpt  (top-3)
+│   └── last.ckpt                                            (final epoch)
+└── logs/
+    └── version_0/
+        ├── hparams.yaml  # Actual hyperparameters used
+        └── metrics.csv   # Per-step training logs (2,421 rows)
+```
 
 ---
 
-## Output Files Reference
+## File Reference
 
-All outputs are saved to `results/04_enhanced_ensemble/`:
-
-```
-results/04_enhanced_ensemble/
-├── metrics.json                    # Full metrics (all splits, per-screen details)
-├── metrics.csv                     # Flat CSV (one row per split, for easy comparison)
-├── predictions.csv                 # Test predictions (y_true, y_pred)
-├── predictions_train.csv           # Train predictions (patent_id, y_true, y_pred, residual)
-├── predictions_val.csv             # Val predictions
-├── predictions_test.csv            # Test predictions (with patent_id and residuals)
-├── base_model_metrics.json         # Individual base model val metrics and timings
-├── hyperparameters.json            # Final hyperparameters used (default or Optuna-tuned)
-├── feature_names.json              # List of 492 selected feature names
-├── feature_selection_report.json   # Full selection report (dropped features, MI scores)
-├── weights/
-│   └── ensemble.pkl                # Pickled StackingRegressor + scaler + feature metadata
-├── logs/
-│   ├── train_YYYYMMDD_HHMMSS.log  # Full training log (DEBUG level)
-│   └── optuna_*_trials.json        # Optuna trial histories (when HPO enabled)
-└── shap/
-    ├── shap_values.csv             # Raw SHAP values (2000 × 492)
-    ├── shap_importance.csv         # Mean |SHAP| per feature (sorted)
-    ├── shap_bar_top30.png          # Bar chart of top 30 features
-    ├── shap_beeswarm.png           # Beeswarm plot (value distribution)
-    └── shap_dependence_top1.png    # Dependence plot for top feature
-```
-
-### Key File Descriptions
-
-| File | Size | Description |
-|------|:----:|-------------|
-| `ensemble.pkl` | ~52 MB | Complete model state: `StackingRegressor`, `StandardScaler`, feature names, kept indices. Load with `pickle.load()`. |
-| `metrics.json` | ~20 KB | Comprehensive metrics including per-screen Spearman for every patent/screen evaluated. |
-| `shap_values.csv` | ~20 MB | Raw SHAP values for 2,000 test samples — use for custom analysis. |
-| `feature_selection_report.json` | ~20 KB | Lists every dropped feature with detailed MI scores. |
-| Training logs | ~8 KB | Timestamped, every step recorded at DEBUG level. |
-
----
-
-## Logging & Disk Persistence
-
-A core design goal of Model 04 is that **nothing stays in memory only** — every intermediate computation is written to disk.
-
-### Dual-Handler Logging
-
-| Handler | Level | Target | Content |
-|---------|-------|--------|---------|
-| File | `DEBUG` | `logs/train_YYYYMMDD_HHMMSS.log` | Everything: feature counts, MI scores, per-model timings, SHAP progress |
-| Console | `INFO` | `stdout` | Key milestones: split sizes, feature dimensions, model metrics, final summary |
-
-### What Is Persisted
-
-| Item | File | Format |
-|------|------|--------|
-| Feature names (final) | `feature_names.json` | JSON array |
-| Feature selection report | `feature_selection_report.json` | JSON (dropped features, MI scores, thresholds) |
-| Hyperparameters | `hyperparameters.json` | JSON dict per model |
-| Base model metrics | `base_model_metrics.json` | JSON (val Spearman/R²/MAE, timing, params) |
-| Optuna trials | `logs/optuna_*_trials.json` | JSON (best params, all trial values) |
-| Train/Val/Test metrics | `metrics.json` + `metrics.csv` | JSON (detailed) + CSV (flat) |
-| Per-screen Spearman | Inside `metrics.json` | Dict: patent_id → Spearman ρ |
-| Predictions (all splits) | `predictions_{split}.csv` | patent_id, y_true, y_pred, residual |
-| Model weights | `weights/ensemble.pkl` | Pickle (ensemble + scaler + metadata) |
-| SHAP values | `shap/shap_values.csv` | CSV (2000 × 492 matrix) |
-| SHAP importance | `shap/shap_importance.csv` | CSV (feature, mean_abs_shap) |
-| SHAP plots | `shap/*.png` | PNG images (150 DPI) |
-| Full training log | `logs/train_*.log` | Text (timestamp + level + message) |
+| File | Description |
+|------|-------------|
+| `models/05_oligoai_stage3_stabilized/train.py` | Main training script with CLI, data loading, training loop, evaluation |
+| `utils/enhanced_model.py` | `EnhancedOligoAI` model (671 lines): all neural network components |
+| `utils/enhanced_dataset.py` | `EnhancedOligoAIDataset` + `enhanced_collate_fn`: feature extraction & batching |
+| `utils/dataset.py` | `ChemistryTokenizer`, `create_patent_split`: tokenization & data splitting |
+| `utils/model.py` | Base `OligoAI` model (used by Model 03, shares some components) |
+| `utils/rna_features.py` | RNAplfold structural feature extraction (parallel processing) |
+| `utils/thermo_features.py` | Nearest-neighbor ΔG computation (standalone, no external deps) |
+| `utils/rinalmo/` | Vendored RiNALMo language model (config, pretrained weights, transformer) |
+| `results/05_oligoai_stage3_stabilized/metrics.json` | Evaluation results |
+| `results/05_oligoai_stage3_stabilized/predictions.csv` | Test predictions |
+| `results/05_oligoai_stage3_stabilized/logs/version_0/hparams.yaml` | Actual hyperparameters used in training |
+| `results/05_oligoai_stage3_stabilized/logs/version_0/metrics.csv` | Per-step training logs (2,421 rows) |
 
 ---
 
 ## Known Limitations & Future Work
 
-| # | Limitation | Potential Improvement |
-|---|-----------|----------------------|
-| 1 | **GradientBoosting is slow** (~9 min, no GPU support) | Replace with HistGradientBoostingRegressor (native histogram) or drop GB entirely |
-| 2 | **LightGBM lacks GPU** (pip build is CPU-only) | Build from source with `-DUSE_GPU=1` or use conda-forge GPU package |
-| 3 | **Per-screen Spearman gap vs OligoAI** (0.247 vs 0.419) | Likely needs screen/patent-level features (e.g., cell line embeddings) or within-screen normalisation |
-| 4 | **Stacking CV is expensive** (~93 min for 5-fold × 5 models) | Use 3-fold CV, or fit stacking only on top-2 models (XGB + CAT) |
-| 5 | **No RNA language model features** | Add RiNALMo embeddings as features (hybrid approach with Model 05) |
-| 6 | **Feature selection could be more aggressive** | Try recursive feature elimination (RFE) or Boruta |
-| 7 | **Optuna not yet run** (current results use defaults) | Full HPO run may further improve metrics |
-| 8 | **No target gene/cell line features** | Encode target gene importance, cell line sensitivity as categorical features |
-| 9 | **No cross-validation for final evaluation** | Add repeated k-fold with confidence intervals |
-| 10 | **SHAP on RF only** (not the stacking ensemble) | Implement permutation importance on the full stacker |
+1. **Below OligoAI baseline**: The 0.366 Spearman (vs. ≈0.42 baseline) suggests that adding more features without precise hyperparameter tuning can hurt rather than help. The training history shows the model plateaued at val_spearman ≈ 0.386 (epoch 13), and full unfreezing (epochs 14+) introduced volatility without further improvement. Per requirements §6, negative results are still considered valuable outcomes.
 
----
+2. **Spearman metric discrepancy**: The `train.py` script computes **global Spearman** during training/validation, not the per-screen mean Spearman required by the OligoAI protocol (§5.2). Use `scripts/evaluate.py` for the official per-screen metric. This means the reported `val_spearman` values in the training history table are an approximation of the true per-screen metric.
 
-*README generated from training run 2026-02-22. Total pipeline time: 120.3 minutes (with GPU, default HPs, no HPO).*
+3. **Loss function choice**: The actual training used `ranknet_mixed` (MSE + RankNet), not the CLI default `mixed` (MSE + ListNet). This is recorded in `hparams.yaml`. The pairwise RankNet loss optimizes for ranking quality, which is directly relevant to the Spearman metric.
+
+4. **Standard Scaler on targets**: Predictions are on a z-score scale. The ensemble model (Model 06) avoids this by predicting raw inhibition percentages.
+
+5. **Missing structural/thermo features**: If `structural_features.pkl` or `thermo_features.pkl` are absent, the model falls back to zero vectors, which means several feature branches contribute no signal.
+
+6. **Overfitting in late epochs**: Training loss continued decreasing (0.765 → 0.669) while validation loss rose after epoch 13 (0.746 → 0.769 at epoch 19). The `GradualUnfreezeCallback` correctly exposed more layers over time, but the full unfreezing phase (epochs 14+) coincided with worsening generalization.
+
+7. **Potential improvements**:
+   - Screen-level Spearman evaluation during training (currently uses global Spearman)
+   - Earlier stopping (the best epoch was 13, but training ran to 20)
+   - More conservative unfreezing — the best result was in the top-9 phase, suggesting top-12 opens too many parameters
+   - Hyperparameter search with Optuna across config presets
+   - Data augmentation (reverse complement, noise injection)
+   - Attention-weighted pooling instead of masked mean pooling
+   - Pre-train the head on Model 06 ensemble predictions as pseudo-labels
